@@ -9,9 +9,15 @@ product: flexible dependency ingestion and deterministic live impact simulation.
 
 ## Status
 
-Kickoff. The data model exists as a Postgres schema (`packages/db`); the graph/CPM
-engine is specified in [proposal 0001](./docs/proposals/0001-kickoff-architecture.md)
-and awaits go-ahead before implementation.
+Build step 1 complete. The data model is a Postgres schema (`packages/db`) and the
+deterministic CPM / impact engine (`packages/engine`) is implemented with its test
+suites. Design and rules: [proposal 0001](./docs/proposals/0001-kickoff-architecture.md).
+Next: dependency ingestion (build step 2).
+
+| Package | Purpose |
+| --- | --- |
+| `@cutover/engine` | Pure scheduling engine: graph validation, CPM, live rules, impact simulation, re-import diff. No I/O, no clock, no dependencies. |
+| `@cutover/db` | Drizzle schema, migrations, `createDb()`. |
 
 ## Local setup
 

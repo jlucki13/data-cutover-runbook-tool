@@ -36,6 +36,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export const userRole = pgEnum("user_role", [
+  "admin", // can change column headers, add custom columns, manage users/config
   "builder", // runbook builder / cutover lead
   "task_owner", // workstream lead / executor
   "command_center", // event lead, go/no-go caller
@@ -86,6 +87,18 @@ export const importStatus = pgEnum("import_status", [
 
 export const reviewState = pgEnum("review_state", ["proposed", "accepted", "edited", "rejected"]);
 
+/** Data type of a runbook column (built-in or admin-defined). */
+export const columnDataType = pgEnum("column_data_type", [
+  "text",
+  "number",
+  "boolean",
+  "date",
+  "datetime",
+  "duration_minutes",
+  "select",
+  "user",
+]);
+
 // ---------------------------------------------------------------------------
 // Users & event
 // ---------------------------------------------------------------------------
@@ -120,10 +133,51 @@ export const event = pgTable(
     windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
     windowEnd: timestamp("window_end", { withTimezone: true }).notNull(),
     status: eventStatus("status").notNull().default("planning"),
+    /**
+     * When a task is blocked/failed and the owner has not given an expected unblock time,
+     * the engine assumes work resumes this many minutes after "now" (Jordan: blocked tasks
+     * show an assumed recovery rather than an unknown).
+     */
+    defaultBlockedRecoveryMinutes: integer("default_blocked_recovery_minutes").notNull().default(30),
     createdById: uuid("created_by_id").references(() => appUser.id),
     ...timestamps,
   },
-  (t) => [check("event_window_chk", sql`${t.windowEnd} > ${t.windowStart}`)],
+  (t) => [
+    check("event_window_chk", sql`${t.windowEnd} > ${t.windowStart}`),
+    check("event_recovery_nonneg_chk", sql`${t.defaultBlockedRecoveryMinutes} >= 0`),
+  ],
+);
+
+/**
+ * Runbook column configuration per event. Admins can relabel built-in columns
+ * (`builtinKey` set) and add custom columns (`builtinKey` null; values live in
+ * `task.custom_fields[key]`). Everyone else sees columns read-only.
+ */
+export const eventColumn = pgTable(
+  "event_column",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => event.id, { onDelete: "cascade" }),
+    /** Stable machine key. For custom columns this is the JSON key in task.custom_fields. */
+    key: text("key").notNull(),
+    /** Built-in task column this row configures (e.g. "planned_start"); null for custom columns. */
+    builtinKey: text("builtin_key"),
+    label: text("label").notNull(),
+    dataType: columnDataType("data_type").notNull().default("text"),
+    /** For data_type = select: { options: string[] }. */
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
+    position: integer("position").notNull().default(0),
+    isVisible: boolean("is_visible").notNull().default(true),
+    isRequired: boolean("is_required").notNull().default(false),
+    createdById: uuid("created_by_id").references(() => appUser.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("event_column_event_key_uq").on(t.eventId, t.key),
+    check("event_column_key_format_chk", sql`${t.key} ~ '^[a-z][a-z0-9_]{0,63}$'`),
+  ],
 );
 
 export const workstream = pgTable(
@@ -173,6 +227,11 @@ export const task = pgTable(
     actualEnd: timestamp("actual_end", { withTimezone: true }),
     /** Owner's live re-estimate for an in-progress task. Null = planned duration minus elapsed. */
     remainingDurationMinutes: integer("remaining_duration_minutes"),
+    /** For blocked/failed tasks: when the owner expects to resume. Null = event default recovery. */
+    expectedUnblockAt: timestamp("expected_unblock_at", { withTimezone: true }),
+
+    // --- admin-defined columns (keys defined in event_column) ---
+    customFields: jsonb("custom_fields").$type<Record<string, unknown>>().notNull().default({}),
 
     // --- provenance ---
     source: sourceFormat("source").notNull().default("manual"),
