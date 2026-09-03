@@ -1,0 +1,78 @@
+[
+  {
+    "name": "numbered tasks, explicit after/complete",
+    "text": "Task 9 extracts balances (30 minutes). Task 11 loads balances and takes about an hour; it needs Task 9 done first. Task 14 starts after Task 9 and Task 11 complete. Task 15 reconciles balances once Task 14 is finished and must be done by 06:00.",
+    "expected": {
+      "tasks": ["9", "11", "14", "15"],
+      "dependencies": [
+        { "p": "9", "s": "11" },
+        { "p": "9", "s": "14" },
+        { "p": "11", "s": "14" },
+        { "p": "14", "s": "15" }
+      ]
+    }
+  },
+  {
+    "name": "lags and negative lags",
+    "text": "ACC-3 (reconcile accounts) can begin 15 minutes before ACC-2 (load accounts) finishes. NOT-1 (generate notices) starts two hours after ACC-3 completes so the batch can settle.",
+    "expected": {
+      "tasks": ["ACC-2", "ACC-3", "NOT-1"],
+      "dependencies": [
+        { "p": "ACC-2", "s": "ACC-3", "type": "FS", "lag": -15 },
+        { "p": "ACC-3", "s": "NOT-1", "type": "FS", "lag": 120 }
+      ]
+    }
+  },
+  {
+    "name": "chains with then, parallel work is not a dependency",
+    "text": "Core sequence: FRZ-1 declare the freeze, then FRZ-2 run the final extract, then MIG-1 migrate accounts. MIG-2 (statements) and MIG-3 (balances) run in parallel and both need MIG-1. REC-1 reconciles everything and requires MIG-2 and MIG-3.",
+    "expected": {
+      "tasks": ["FRZ-1", "FRZ-2", "MIG-1", "MIG-2", "MIG-3", "REC-1"],
+      "dependencies": [
+        { "p": "FRZ-1", "s": "FRZ-2" },
+        { "p": "FRZ-2", "s": "MIG-1" },
+        { "p": "MIG-1", "s": "MIG-2" },
+        { "p": "MIG-1", "s": "MIG-3" },
+        { "p": "MIG-2", "s": "REC-1" },
+        { "p": "MIG-3", "s": "REC-1" }
+      ],
+      "forbidden": [
+        { "p": "MIG-2", "s": "MIG-3" },
+        { "p": "MIG-3", "s": "MIG-2" },
+        { "p": "FRZ-1", "s": "MIG-1" }
+      ]
+    }
+  },
+  {
+    "name": "before/blocks direction and start-to-start",
+    "text": "STM-4 must finish before STM-5 can start. STM-6 blocks STM-7. STM-8 kicks off at the same moment STM-7 starts. The go/no-go call (GATE-1) happens after STM-5 and STM-7 are reconciled; SWI-1 switches routing only after GATE-1 is approved.",
+    "expected": {
+      "tasks": ["STM-4", "STM-5", "STM-6", "STM-7", "STM-8", "GATE-1", "SWI-1"],
+      "dependencies": [
+        { "p": "STM-4", "s": "STM-5" },
+        { "p": "STM-6", "s": "STM-7" },
+        { "p": "STM-7", "s": "STM-8", "type": "SS" },
+        { "p": "STM-5", "s": "GATE-1" },
+        { "p": "STM-7", "s": "GATE-1" },
+        { "p": "GATE-1", "s": "SWI-1" }
+      ]
+    }
+  },
+  {
+    "name": "mentions of known runbook tasks",
+    "knownTasks": [
+      { "ref": "FRZ-2", "name": "Final source extract" },
+      { "ref": "MIG-ACC", "name": "Migrate accounts" }
+    ],
+    "text": "Balances team plan: BAL-1 pulls the balance file as soon as the final source extract is done. BAL-2 loads balances after BAL-1 and after the accounts migration has landed. BAL-3 reconciles balances after BAL-2.",
+    "expected": {
+      "tasks": ["BAL-1", "BAL-2", "BAL-3"],
+      "dependencies": [
+        { "p": "FRZ-2", "s": "BAL-1" },
+        { "p": "BAL-1", "s": "BAL-2" },
+        { "p": "MIG-ACC", "s": "BAL-2" },
+        { "p": "BAL-2", "s": "BAL-3" }
+      ]
+    }
+  }
+]

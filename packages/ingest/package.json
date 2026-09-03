@@ -1,0 +1,28 @@
+{
+  "name": "@cutover/ingest",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dependency ingestion: deterministic CSV/spreadsheet and MS Project parsers, LLM prose parser, worksheet compile + diff.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run",
+    "eval:prose": "tsx test/eval/prose-eval.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.123.0",
+    "@cutover/engine": "workspace:*",
+    "exceljs": "^4.4.0",
+    "fast-xml-parser": "^5.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
