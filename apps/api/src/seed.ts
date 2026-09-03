@@ -30,7 +30,17 @@ async function ensureUser(name: string, email: string, role: string, adminId?: s
   return res.json().id as string;
 }
 
-const admin = await ensureUser("Jordan", "jordan@example.com", "admin");
+async function ensureAdmin(): Promise<string> {
+  const admins = await db.select().from(appUser).where(eq(appUser.role, "admin")).limit(1);
+  if (admins[0]) return admins[0].id;
+  const jordan = await db.select().from(appUser).where(eq(appUser.email, "jordan@example.com")).limit(1);
+  if (jordan[0]) {
+    await db.update(appUser).set({ role: "admin" }).where(eq(appUser.id, jordan[0].id));
+    return jordan[0].id;
+  }
+  return ensureUser("Jordan", "jordan@example.com", "admin");
+}
+const admin = await ensureAdmin();
 const users: Record<string, string> = {};
 for (const [name, email, role] of [
   ["Ops Lead", "ops@example.com", "builder"],
