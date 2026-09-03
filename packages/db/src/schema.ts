@@ -212,6 +212,8 @@ export const task = pgTable(
     description: text("description"),
     workstreamId: uuid("workstream_id").references(() => workstream.id, { onDelete: "set null" }),
     ownerId: uuid("owner_id").references(() => appUser.id, { onDelete: "set null" }),
+    /** Owner text from an import that matched no user; shown until someone assigns a real owner. */
+    ownerHint: text("owner_hint"),
 
     // --- builder intent (inputs to CPM) ---
     /** Optional "start no earlier than" constraint. Null = as early as predecessors allow. */
@@ -405,6 +407,14 @@ export const importBatch = pgTable(
     /** Model + prompt version for LLM-parsed batches; parser version for deterministic ones. */
     parserVersion: text("parser_version"),
     parserModel: text("parser_model"),
+    /** Parse options as submitted (timezone, date order, sheets, removal scope…). */
+    options: jsonb("options").$type<Record<string, unknown>>().notNull().default({}),
+    /** Worksheet names parsed from this upload (one per sheet for workbooks). */
+    worksheets: jsonb("worksheets").$type<string[]>().notNull().default([]),
+    /** Parse + compile issues at upload time. */
+    issues: jsonb("issues").$type<unknown[]>().notNull().default([]),
+    /** Compile summary counts at upload time. */
+    summary: jsonb("summary").$type<Record<string, unknown>>(),
     createdById: uuid("created_by_id").references(() => appUser.id, { onDelete: "set null" }),
     committedById: uuid("committed_by_id").references(() => appUser.id, { onDelete: "set null" }),
     committedAt: timestamp("committed_at", { withTimezone: true }),
@@ -427,11 +437,21 @@ export const importCandidateTask = pgTable(
     plannedStart: timestamp("planned_start", { withTimezone: true }),
     plannedDurationMinutes: integer("planned_duration_minutes"),
     windowDeadline: timestamp("window_deadline", { withTimezone: true }),
+    description: text("description"),
+    customFields: jsonb("custom_fields").$type<Record<string, string>>(),
     /** Existing task this candidate would update (matched on ref). Null = would create. */
     matchedTaskId: uuid("matched_task_id").references(() => task.id, { onDelete: "set null" }),
+    /** add | change | unchanged | remove — result of diffing against the committed graph. */
+    diffKind: text("diff_kind").notNull().default("add"),
+    /** Field-level changes for diff_kind = change: [{field, before, after}]. */
+    changes: jsonb("changes").$type<unknown[]>(),
     reviewState: reviewState("review_state").notNull().default("proposed"),
+    /** Reviewer edits applied on commit (subset of candidate fields). */
+    edits: jsonb("edits").$type<Record<string, unknown>>(),
     /** Source snippet / row that produced this candidate. */
     evidence: text("evidence"),
+    sourceLine: integer("source_line"),
+    worksheet: text("worksheet"),
   },
   (t) => [uniqueIndex("import_candidate_task_batch_ref_uq").on(t.batchId, t.ref)],
 );
@@ -452,14 +472,20 @@ export const importCandidateDependency = pgTable(
     /** The exact source text that implied this edge; shown in the review UI. */
     evidence: text("evidence"),
     /** Result of diffing against the committed graph: add | unchanged | change | remove. */
-    diffKind: text("diff_kind"),
+    diffKind: text("diff_kind").notNull().default("add"),
+    /** exact | loose | unresolved — how the refs matched known tasks. */
+    resolution: text("resolution").notNull().default("exact"),
     reviewState: reviewState("review_state").notNull().default("proposed"),
+    /** Reviewer edits applied on commit (type, lagMinutes, predecessorRef, successorRef). */
+    edits: jsonb("edits").$type<Record<string, unknown>>(),
     reviewerNote: text("reviewer_note"),
+    sourceLine: integer("source_line"),
+    worksheet: text("worksheet"),
     reviewedById: uuid("reviewed_by_id").references(() => appUser.id, { onDelete: "set null" }),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   },
   (t) => [
-    index("import_candidate_dependency_batch_idx").on(t.batchId),
+    uniqueIndex("import_candidate_dependency_batch_edge_uq").on(t.batchId, t.predecessorRef, t.successorRef),
     check(
       "import_candidate_dependency_no_self_loop_chk",
       sql`${t.predecessorRef} <> ${t.successorRef}`,

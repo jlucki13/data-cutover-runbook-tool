@@ -71,12 +71,13 @@ export function diffGraphInputs(
   }
   const removed: EngineTask[] = incoming.tasks ? current.tasks.filter((t) => scope(t) && !incByRef.has(t.ref)) : [];
 
-  // Dependencies: compare within the incoming scope. Current edges touching a scoped task
-  // count as "current"; incoming edges are authoritative for those.
+  // Dependencies: add/change/unchanged are judged against every current edge. Removals are
+  // scoped to edges whose *successor* is a scoped task: a workstream's sheet owns the
+  // predecessors of its own tasks, never the edges other workstreams declare into it.
   const curDeps = toRefDependencies(current.tasks, current.dependencies);
   const scopedRefs = new Set(current.tasks.filter(scope).map((t) => t.ref));
-  const curScoped = curDeps.filter((d) => scopedRefs.has(d.predecessorRef) || scopedRefs.has(d.successorRef));
-  const curMap = new Map(curScoped.map((d) => [depKey(d), d] as const));
+  const curScoped = curDeps.filter((d) => scopedRefs.has(d.successorRef));
+  const curMap = new Map(curDeps.map((d) => [depKey(d), d] as const));
   const incDeps = incoming.dependencies ?? [];
   const incMap = new Map(incDeps.map((d) => [depKey(d), d] as const));
 

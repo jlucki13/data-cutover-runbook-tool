@@ -40,9 +40,19 @@ describe("diffGraphInputs (re-import / worksheet compile)", () => {
     ]);
     expect(d.dependencies.unchanged).toEqual([rd("ACC-1", "ACC-2")]);
     expect(d.dependencies.added).toEqual([rd("ACC-2", "ACC-3"), rd("ACC-3", "BAL-1")]);
-    // The old ACC-2 -> BAL-1 edge touches the scope and is absent from the new sheet: removed.
-    expect(d.dependencies.removed).toEqual([rd("ACC-2", "BAL-1", "FS", 15)]);
+    // ACC-2 -> BAL-1 belongs to the balances sheet (its successor is BAL-1), so the accounts sheet cannot remove it.
+    expect(d.dependencies.removed).toEqual([]);
     expect(d.unresolvedRefs).toEqual([]);
+  });
+
+  it("a sheet removes only the predecessors of its own tasks that it no longer lists", () => {
+    const d = diffGraphInputs(
+      current,
+      { tasks: [task("y", 30, { ref: "ACC-2", workstreamId: "accounts", ownerId: "o1" })], dependencies: [] },
+      { scope: (t) => t.workstreamId === "accounts" },
+    );
+    expect(d.dependencies.removed).toEqual([rd("ACC-1", "ACC-2")]); // successor ACC-2 is in scope
+    expect(d.tasks.removed.map((t) => t.ref)).toEqual(["ACC-1"]);
   });
 
   it("a full re-import removes anything missing", () => {
@@ -57,6 +67,11 @@ describe("diffGraphInputs (re-import / worksheet compile)", () => {
     expect(d.unresolvedRefs).toEqual(["NOPE-1"]);
     expect(d.tasks.removed).toEqual([]); // no incoming task list => no task removals
     expect(d.dependencies.removed.map((x) => `${x.predecessorRef}>${x.successorRef}`)).toEqual(["ACC-2>BAL-1"]);
+    // An unscoped diff with no task list still compares edges against the whole graph.
+    const same = diffGraphInputs(current, { dependencies: [rd("ACC-1", "ACC-2"), rd("ACC-2", "BAL-1", "FS", 15)] });
+    expect(same.dependencies.added).toEqual([]);
+    expect(same.dependencies.unchanged).toHaveLength(2);
+    expect(same.dependencies.removed).toEqual([]);
   });
 
   it("toRefDependencies drops edges whose endpoints are unknown", () => {

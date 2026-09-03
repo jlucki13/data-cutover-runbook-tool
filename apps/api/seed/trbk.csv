@@ -1,0 +1,14 @@
+Task ID,Task Name,Workstream,Owner,Planned Start (UTC),Duration (min),Depends On,Deadline
+FRZ-1,Declare freeze on source system,Core,Ops Lead,2026-10-16 22:00,30,,
+FRZ-2,Final source extract,Core,Ops Lead,,120,FRZ-1,
+MIG-ACC,Migrate accounts,Accounts,Priya,,180,FRZ-2,
+MIG-BAL,Migrate balances,Balances,Bala,,150,MIG-ACC,
+MIG-STM,Migrate statements,Statements,Sam,,240,MIG-ACC,
+MIG-NOT,Generate customer notices,Notices,Nia,,90,"MIG-BAL, MIG-STM",
+REC-ACC,Reconcile accounts,Reconciliation,Recon Team,,60,MIG-ACC,
+REC-BAL,Reconcile balances,Reconciliation,Recon Team,,90,MIG-BAL,2026-10-17 12:00
+REC-STM,Reconcile statements,Reconciliation,Recon Team,,60,MIG-STM,
+SWI-1,Switch routing to target platform,Core,Ops Lead,,60,,
+SWI-2,Smoke test target platform,Core,Ops Lead,,45,SWI-1,
+RBK-1,Rollback-eligible window monitoring,Core,Ops Lead,,240,SWI-2,
+CLS-1,Close event and release comms,Core,Ops Lead,,30,,

@@ -12,7 +12,10 @@ What is in the repo:
 | `packages/db/drizzle/0000_init.sql`, `0002_kickoff_answers.sql` | Generated DDL. |
 | `packages/db/drizzle/0001_audit_log_append_only.sql` | Hand-written migration: triggers that reject UPDATE/DELETE/TRUNCATE on the audit log. |
 | `packages/engine/` | The CPM / impact engine (§4) with 112 unit, property, determinism and performance tests. |
-| `packages/engine/test/fixtures/trbk.ts` | TRBK-style mock cutover event used by the tests (and later the seed). |
+| `packages/engine/test/fixtures/trbk.ts` | TRBK-style mock cutover event used by the tests. |
+| `packages/ingest/` | Ingestion (§7): CSV/TSV, Excel workbook and MS Project XML parsers, LLM prose parser, worksheet compile + diff. 57 tests. |
+| `apps/api/` | Fastify API (§8): import → review → commit workflow, graph, schedule, simulation, live task/gate updates, audit. 17 integration tests against Postgres. |
+| `apps/api/seed/trbk.csv`, `apps/api/src/seed.ts` | Seeds the TRBK event through the real import pipeline. |
 | `docker-compose.yml` | Local Postgres 16. |
 
 Both migrations were applied to a local Postgres 16 and smoke-tested: self-loop
@@ -353,6 +356,73 @@ because they are judgment calls, both switchable:
 - Performance test at 1,000 and 5,000 tasks against the §4.4 target.
 - A TRBK-style mock event fixture (freeze → migrate → validate → gate → switch → rollback-eligible window) shared by the tests and, later, the database seed.
 
-Next: build step 2, the ingestion pipeline (CSV first, then MS Project XML and Gantt CSV,
-then the LLM prose parser), all landing in the `import_candidate_*` staging tables with the
-worksheet-compile and review flow on top of `diffGraphInputs`.
+---
+
+## 7. Build step 2 as delivered: ingestion (`@cutover/ingest`)
+
+Every parser produces the same `ParsedPlan` (candidate tasks, candidate dependencies,
+issues with line numbers) and nothing touches the database. Parsers:
+
+- **CSV/TSV and Excel workbooks.** Header row found by synonym matching (overridable per
+  column); predecessor cells accept `T-9`, `14FS+2h`, `ACC-3 SS-30m`; durations accept
+  `90`, `1.5h`, `2h 30m`, `01:30`, `PT1H30M`, with the unit taken from the header
+  ("Duration (hrs)"); dates accept ISO, US/day-first numeric, month names and Excel
+  serials, with naive values interpreted in the event's timezone. Unmapped columns are
+  kept as custom fields. Each workbook sheet is its own worksheet; with several sheets the
+  sheet name is the default workstream.
+- **MS Project XML (MSPDI).** Leaf tasks only; the outline-level-1 summary becomes the
+  workstream; link types 0–3 map to FF/FS/SF/SS with lag in tenths of minutes; SNET/MSO
+  constraints and unlinked late starts become `plannedStart`; Deadline / FNLT become
+  `windowDeadline`; resources become owner names.
+- **Prose (LLM).** Claude Opus 5 via structured outputs behind an injectable client, with
+  an extraction prompt that fixes dependency direction rules and requires verbatim
+  evidence. Deterministic post-validation: evidence must be a substring of the source or
+  confidence is capped at 0.5; refs normalized; duplicates and self-loops dropped. An
+  eval harness (`pnpm --filter @cutover/ingest eval:prose`) reports dependency
+  precision/recall over fixture cases and is the gate for any escalation to Fable per
+  CLAUDE.md. It has not been run yet: no Anthropic credentials in the build environment.
+
+**Compile step** (`compileWorksheets`), Jordan's "worksheets first, tool compiles the
+runbook": merges N worksheets (conflicting duplicate refs are errors), resolves
+dependency refs across sheets and the committed graph (exact, then loose on case and
+zero-padding, else unresolved with suggestions), diffs against the committed graph by
+ref, and dry-runs the merged graph through the engine so a cycle is reported before
+anything is committed.
+
+Two rules decided here and encoded in the engine's diff:
+
+- A worksheet is authoritative for its own workstream(s): existing tasks of those
+  workstreams that it no longer lists are proposed for removal; other workstreams are
+  untouched. A prose note never proposes removals.
+- A worksheet owns the predecessors of its own tasks. It can remove an edge only when
+  the edge's successor is one of its tasks; edges other workstreams declare into it are
+  never removed by its re-import.
+
+## 8. API as delivered (`@cutover/api`)
+
+Fastify 5 + Drizzle. Development auth: `x-user-id` or `x-user-email` header, roles
+enforced per route (admin passes everything). The first `POST /users` on an empty
+database bootstraps the admin. Swap `resolveUser` for a session lookup when real auth
+lands; the route guards stay.
+
+| Area | Endpoints |
+| --- | --- |
+| Users | `POST /users`, `GET /users`, `GET /me` |
+| Events | `POST /events`, `GET /events`, `GET /events/:id`, `PATCH /events/:id` (status planning → live → closed), `GET /events/:id/graph`, `GET /events/:id/workstreams`, `GET /events/:id/audit` |
+| Columns (admin) | `GET/POST /events/:id/columns`, `PATCH/DELETE /columns/:id` |
+| Imports | `POST /events/:id/imports` (csv, xlsx base64, ms_project_xml, prose) → staged review; `GET /imports/:id`; `POST /imports/:id/review` (per-candidate accept/reject/edit, or all proposed); `POST /imports/:id/commit`; `POST /imports/:id/discard` |
+| Schedule | `GET /events/:id/schedule` (on demand), `POST /events/:id/schedule/baseline`, `GET /events/:id/schedule/runs`, `GET /schedule-runs/:id`, `GET /events/:id/impact/latest`, `POST /events/:id/simulate` |
+| Live | `PATCH /tasks/:id` (status, actuals, remaining, expected unblock; owners only their own tasks and never plan fields), `POST /gates/:id/decision` (designated approver or admin) |
+| Gates | `GET/POST /events/:id/gates` (by task ref; a gate that creates a cycle is rejected) |
+
+Commit rules: only accepted/edited candidates apply; `acceptAllProposed` bulk-accepts a
+deterministic import, but for an LLM batch only dependencies at or above confidence 0.9
+qualify and the rest must be decided individually (409 lists them). A commit is refused
+while any unresolved ref or cycle remains, and cannot delete a task that has started.
+Every commit runs in one transaction with audit entries per created/updated/deleted row
+and ends with a schedule run (baseline while planning, live once the event is live).
+Task and gate updates write the audit entry and the resulting live run in the same
+transaction, with the entry pointing at the run it caused.
+
+Next: build step 3, visualization (graph and timeline views) in `apps/web`, then the
+simulation UI over `POST /events/:id/simulate`.
