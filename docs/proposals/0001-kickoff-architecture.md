@@ -16,6 +16,8 @@ What is in the repo:
 | `packages/ingest/` | Ingestion (§7): CSV/TSV, Excel workbook and MS Project XML parsers, LLM prose parser, worksheet compile + diff. 57 tests. |
 | `apps/api/` | Fastify API (§8): import → review → commit workflow, graph, schedule, simulation, live task/gate updates, audit. 17 integration tests against Postgres. |
 | `apps/api/seed/trbk.csv`, `apps/api/src/seed.ts` | Seeds the TRBK event through the real import pipeline. |
+| `apps/web/` | React app (§9): graph, timeline, simulation, import review, audit. 6 unit tests + a browser smoke run. |
+| `scripts/smoke.sh` | Starts API + built web app against a seeded database and drives the real UI in Chromium. |
 | `docker-compose.yml` | Local Postgres 16. |
 
 Both migrations were applied to a local Postgres 16 and smoke-tested: self-loop
@@ -424,5 +426,38 @@ and ends with a schedule run (baseline while planning, live once the event is li
 Task and gate updates write the audit entry and the resulting live run in the same
 transaction, with the entry pointing at the run it caused.
 
-Next: build step 3, visualization (graph and timeline views) in `apps/web`, then the
-simulation UI over `POST /events/:id/simulate`.
+---
+
+## 9. Build steps 3 and 4 as delivered: visualization and simulation (`@cutover/web`)
+
+React + Vite, talking to the API through a dev proxy. The decisive choice: **the browser
+runs the same `@cutover/engine`**, so the plan schedule, a live recompute and every
+what-if are computed locally from the graph the API serves. Scenarios are therefore
+instant and free, the server is not consulted per keystroke, and the numbers on screen are
+the same numbers the server persists (identical code, identical inputs). Only real
+changes and saved scenario runs go back to the API.
+
+| View | What it does |
+| --- | --- |
+| **Graph** | Layered DAG (React Flow + dagre), workstream colour per node, critical path in red, gates as pills showing status and slack, dashed borders where a projection rests on an assumed recovery. Click selects, double-click zooms to a task's neighbourhood. Caps at 600 rendered nodes and says so; large events are explored through filters and focus rather than drawn whole. |
+| **Timeline** | Gantt-hybrid in plain SVG: rows grouped by workstream, bar from projected start to finish, dotted tail to late finish (float), ▼ deadline markers with the breach shaded, gate rows with target vs projected-ready, live "now" line, and grey baseline ghosts when a what-if is active. |
+| **Simulate** | Build a change list (delay, duration, status, start constraint, gate decision) and see, immediately: event finish and window breach, new/worsened/resolved deadline breaches, gate status and slack before → after, the new critical path, every affected task with start and finish shifts, and owners to notify with reasons. Tasks with no owner are listed separately so nobody is silently missed. "Save scenario run" persists it server-side; scenarios never change the plan. |
+| **Imports** | Upload a worksheet (CSV/TSV, Excel, MS Project XML) or paste prose, choose the removal scope, then review every candidate: diff kind against the committed graph, field-level changes, source worksheet and row, evidence, ref resolution, and LLM confidence. Accept/reject per row or in bulk, then commit. Blocking issues disable the commit button. |
+| **Audit** | The append-only log, newest first, with actor, action and a field-level summary. |
+
+Filters (shared by graph and timeline): search, workstream chips, status, owner, critical
+only, a time-window slider, and neighbourhood focus with a hop radius.
+
+Colours follow a validated categorical palette assigned per workstream in a fixed order;
+status colours (critical, at-risk, held, good) are reserved and never reused for a
+workstream, and every status is carried by text as well as colour.
+
+Verification: 6 unit tests for the filter/layout/format/palette logic, plus
+`scripts/smoke.sh`, which starts the API and the built app against a seeded database and
+drives the real UI in Chromium (graph renders, task panel opens, timeline draws, a 6-hour
+delay produces the expected breached gate, import review loads), failing on any console
+error. It found three real bugs: a missing React Flow provider that blanked the page, a
+grid that gave the canvas zero height, and committed import candidates that still
+displayed as "proposed" instead of recording the decision.
+
+Next: build step 6, notifications, dashboards and post-event reporting.

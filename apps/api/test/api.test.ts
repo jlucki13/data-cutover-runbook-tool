@@ -110,6 +110,11 @@ describe("import → review → commit", () => {
     const review = await call(ctx.app, { method: "GET", url: `/imports/${batchId}`, as: users.auditor, expect: 200 });
     expect(review.body.batch.status).toBe("committed");
     expect(review.body.tasks.every((t: any) => t.matchedTaskId)).toBe(true);
+    // The batch is a record of what was decided: candidates committed under acceptAllProposed
+    // are stored as accepted, not left looking un-reviewed.
+    expect(review.body.tasks.every((t: any) => t.reviewState === "accepted")).toBe(true);
+    expect(review.body.dependencies.every((d: any) => d.reviewState === "accepted")).toBe(true);
+    expect(review.body.dependencies.every((d: any) => d.reviewedById === users.builder.id)).toBe(true);
     const again = await call(ctx.app, { method: "POST", url: `/imports/${batchId}/commit`, as: users.builder, payload: { acceptAllProposed: true } });
     expect(again.status).toBe(409);
   });
@@ -139,6 +144,9 @@ ACC-VAL,Validate account counts,Accounts,Priya,30,MIG-ACC
     });
     const c = await call(ctx.app, { method: "POST", url: `/imports/${r.body.batch.id}/commit`, as: users.builder, expect: 200, payload: {} });
     expect(c.body).toMatchObject({ tasksCreated: 1, tasksUpdated: 1, tasksDeleted: 0, dependenciesCreated: 1, dependenciesDeleted: 0 });
+    const after = await call(ctx.app, { method: "GET", url: `/imports/${r.body.batch.id}`, as: users.auditor, expect: 200 });
+    expect(after.body.tasks.find((t: any) => t.ref === "ACC-TMP").reviewState).toBe("rejected");
+    expect(after.body.dependencies.find((d: any) => d.successorRef === "ACC-TMP").reviewState).toBe("rejected");
     const tasks = await refreshTaskIds();
     expect(tasks.find((t) => t.ref === "MIG-ACC").plannedDurationMinutes).toBe(200);
     expect(tasks.find((t) => t.ref === "ACC-TMP")).toBeDefined();

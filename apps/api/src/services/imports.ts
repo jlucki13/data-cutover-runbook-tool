@@ -506,6 +506,15 @@ export async function commitImport(db: Db, args: CommitArgs): Promise<CommitResu
       }
     }
 
+    // Record the decision on candidates that were committed under `acceptAllProposed`,
+    // so the batch stays a truthful record of what was accepted rather than "proposed".
+    const autoAcceptedTaskIds = acceptedTasks.filter((c) => c.reviewState === "proposed").map((c) => c.id);
+    if (autoAcceptedTaskIds.length > 0) await tx.update(importCandidateTask).set({ reviewState: "accepted" }).where(inArray(importCandidateTask.id, autoAcceptedTaskIds));
+    const autoAcceptedDepIds = acceptedDeps.filter((c) => c.reviewState === "proposed").map((c) => c.id);
+    if (autoAcceptedDepIds.length > 0) {
+      await tx.update(importCandidateDependency).set({ reviewState: "accepted", reviewedById: args.userId, reviewedAt: new Date() }).where(inArray(importCandidateDependency.id, autoAcceptedDepIds));
+    }
+
     // Batch bookkeeping, schedule recompute, audit.
     await tx.update(importBatch).set({ status: "committed", committedById: args.userId, committedAt: new Date(), updatedAt: new Date() }).where(eq(importBatch.id, batch.id));
     const after = await loadRunbook(tx, eventId);

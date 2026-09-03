@@ -9,9 +9,10 @@ product: flexible dependency ingestion and deterministic live impact simulation.
 
 ## Status
 
-Build steps 1 and 2 complete: engine, data model, ingestion pipeline and the API import
-workflow. Design and rules: [proposal 0001](./docs/proposals/0001-kickoff-architecture.md).
-Next: visualization (build step 3).
+Build steps 1 to 4 complete: engine, data model, ingestion pipeline, API, and the web app
+(dependency graph, timeline, impact simulation, import review, audit). Design and rules:
+[proposal 0001](./docs/proposals/0001-kickoff-architecture.md). Next: notifications,
+dashboards and post-event reporting (build step 6).
 
 | Package | Purpose |
 | --- | --- |
@@ -19,6 +20,7 @@ Next: visualization (build step 3).
 | `@cutover/ingest` | Parsers (CSV/TSV, Excel, MS Project XML, LLM prose) and the worksheet compile + diff step. |
 | `@cutover/db` | Drizzle schema, migrations, `createDb()`. |
 | `@cutover/api` | Fastify API: import → review → commit, graph, schedule, simulation, live updates, audit. |
+| `@cutover/web` | React app: dependency graph, timeline, impact simulation, import review, audit log. |
 
 ## Local setup
 
@@ -42,3 +44,15 @@ pnpm --filter @cutover/api dev      # http://localhost:4000, identify with x-use
 
 Set `ANTHROPIC_API_KEY` to enable the prose import format. To evaluate the prose parser:
 `pnpm --filter @cutover/ingest eval:prose`.
+
+## Running the web app
+
+```sh
+pnpm --filter @cutover/web dev        # http://localhost:5173, proxies /api to the API
+```
+
+Identify yourself in the top bar with a seeded email (`jordan@example.com` is the admin).
+There is no password: development auth is a header, see `apps/api/src/auth.ts`.
+
+`scripts/smoke.sh` starts the API and the built web app against a seeded database, drives
+the real UI in Chromium, and writes screenshots to `apps/web/smoke-out/`.

@@ -2,6 +2,7 @@ node_modules/
 dist/
 build/
 coverage/
+smoke-out/
 *.log
 .env
 .env.*
