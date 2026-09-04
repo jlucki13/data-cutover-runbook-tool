@@ -20,6 +20,19 @@ die() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 command -v pnpm >/dev/null || die "pnpm not found — install it: npm i -g pnpm"
 node -e 'process.exit(parseInt(process.versions.node) >= 22 ? 0 : 1)' || die "Node 22+ required (found $(node -v))"
 
+# A leftover server from a previous run silently serves stale code, and vite refuses the
+# port outright. Say which one and what to do, rather than failing at the health check.
+port_busy() { node -e '
+const net = require("net"), s = net.createServer();
+s.once("error", () => process.exit(0));
+s.once("listening", () => s.close(() => process.exit(1)));
+s.listen(Number(process.argv[1]), "127.0.0.1");
+' "$1" 2>/dev/null; }
+for p in "$API_PORT" "$WEB_PORT"; do
+  port_busy "$p" && die "Port $p is already in use — another copy is probably still running.
+Stop it, or pick different ports: API_PORT=4001 WEB_PORT=5174 scripts/dev.sh"
+done
+
 step "Installing dependencies"
 pnpm install --silent
 
@@ -43,23 +56,41 @@ Start Postgres 16 yourself and re-run with DATABASE_URL=postgres://user:pass@hos
 fi
 
 step "Applying migrations"
-pnpm db:migrate
+pnpm db:migrate || die "Could not migrate $DATABASE_URL.
+If you are using your own Postgres rather than Docker, create the database first and pass
+its URL: createdb cutover && DATABASE_URL=postgres://\$(whoami)@localhost:5432/cutover scripts/dev.sh"
 
 step "Seeding demo data"
 pnpm --filter @cutover/api seed
 pnpm --filter @cutover/api seed:live
 
-# Each server runs in its own process group so Ctrl-C takes the whole tree with it.
+# Servers are started through their local binaries rather than `pnpm exec`, so the pid we
+# background is the node process itself and not a wrapper that outlives the signal. The API
+# runs without `tsx watch` on purpose: the watcher forks the server and restarts it when it
+# dies, which on Ctrl-C leaves an orphan still holding the port. This script is for driving
+# the app, not editing it — `pnpm --filter @cutover/api dev` is the reloading one.
+#
+# Ctrl-C still walks the tree for anything that spawns helpers (vite's esbuild), killing
+# each parent before its children so nothing gets a chance to respawn. `pgrep -P` is the
+# portable way; process groups would need `setsid`, which macOS does not ship.
+kill_tree() {
+  local pid="$1" child children
+  children="$(pgrep -P "$pid" 2>/dev/null || true)"
+  kill "$pid" 2>/dev/null || true
+  for child in $children; do kill_tree "$child"; done
+}
 cleanup() {
   for pid in "${API_PID:-}" "${WEB_PID:-}"; do
     [[ -n "$pid" ]] || continue
-    kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    kill_tree "$pid"
   done
 }
 trap cleanup EXIT INT TERM
 
+[[ -x apps/api/node_modules/.bin/tsx && -x apps/web/node_modules/.bin/vite ]] || die "Dependencies look incomplete — run 'pnpm install' and try again."
+
 step "Starting the API on :$API_PORT"
-setsid bash -c "cd apps/api && PORT=$API_PORT exec pnpm exec tsx watch src/server.ts" &
+( cd apps/api && PORT=$API_PORT exec node_modules/.bin/tsx src/server.ts ) &
 API_PID=$!
 for i in $(seq 1 60); do
   curl -sf "http://localhost:$API_PORT/health" >/dev/null && break
@@ -68,7 +99,7 @@ for i in $(seq 1 60); do
 done
 
 step "Starting the web app on :$WEB_PORT"
-setsid bash -c "cd apps/web && API_URL=http://localhost:$API_PORT exec pnpm exec vite --port $WEB_PORT --strictPort" &
+( cd apps/web && API_URL=http://localhost:$API_PORT exec node_modules/.bin/vite --port "$WEB_PORT" --strictPort ) &
 WEB_PID=$!
 
 cat <<EOF

@@ -5,19 +5,47 @@ the seams are. It assumes nothing about the codebase.
 
 ## Start it
 
+### What you need first
+
+| | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Node 22+ | `brew install node` | your package manager, or [nodejs.org](https://nodejs.org) | [nodejs.org](https://nodejs.org) |
+| pnpm | `corepack enable pnpm` | `corepack enable pnpm` | `corepack enable pnpm` |
+| Postgres 16 | Docker Desktop, or `brew install postgresql@16 && brew services start postgresql@16` | Docker, or your distro's `postgresql-16` | run all of this inside WSL2 |
+
+`corepack enable pnpm` ships with Node, so there is nothing to install for it. Docker is
+the easiest route to Postgres because the repo brings its own — but any Postgres 16 works
+if you point `DATABASE_URL` at it.
+
+On Windows, do this inside WSL2 rather than PowerShell: the launcher is a bash script.
+
+### Then
+
 ```sh
-git clone <this repo> && cd data-cutover-runbook-tool
+git clone https://github.com/jlucki13/data-cutover-runbook-tool.git
+cd data-cutover-runbook-tool
+git checkout claude/new-session-tbclbz
 scripts/dev.sh
 ```
 
 That installs dependencies, starts Postgres (Docker, or your own at `DATABASE_URL`),
 migrates, seeds two demo events, and runs the API and the web app. Then open
-**http://localhost:5173**. Ctrl-C stops everything. Re-running is safe: the seeds skip
-work that already exists.
+**http://localhost:5173**. Ctrl-C stops everything, servers included. Re-running is safe:
+the seeds skip work that already exists.
 
-You need Node 22+, pnpm, and either Docker or a Postgres 16 you point `DATABASE_URL` at.
+Using your own Postgres instead of Docker:
+
+```sh
+createdb cutover
+DATABASE_URL=postgres://$(whoami)@localhost:5432/cutover scripts/dev.sh
+```
+
+If a port is taken, the script says so before doing any work:
+`API_PORT=4001 WEB_PORT=5174 scripts/dev.sh`.
+
 Nothing is sent anywhere: no account, no cloud service, no API key required. The optional
-integrations in [`README.md`](../README.md#optional-integrations) are all off by default.
+integrations in [`README.md`](../README.md#optional-integrations) are all off by default,
+and the app runs entirely on localhost.
 
 ### Signing in
 
