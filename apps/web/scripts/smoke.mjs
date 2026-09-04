@@ -88,7 +88,14 @@ await page.locator("table tbody tr button.linkish").first().click();
 await page.waitForSelector("text=Review:");
 await page.screenshot({ path: `${OUT}/06-imports.png`, fullPage: true });
 
-// Dashboard: block a task through the UI, then check it surfaces and notifies.
+// Dashboard: go live, block a task through the UI, then check it surfaces and notifies.
+// Notifications are deliberately silent while an event is in planning, so this has to
+// happen before the block, exactly as it would on the night.
+const goLive = page.getByRole("button", { name: "Go live" });
+if (await goLive.count()) {
+  await goLive.click();
+  await page.waitForSelector(".badge.live", { timeout: 20000 });
+}
 await page.getByRole("button", { name: "Timeline" }).click();
 await page.waitForSelector("svg.timeline rect.bar");
 await page.locator("svg.timeline text", { hasText: "MIG-BAL" }).first().click();
@@ -104,6 +111,8 @@ await page.waitForSelector("text=Critical path");
 await page.waitForSelector("text=source extract is late", { timeout: 20000 });
 const notifCard = await page.locator(".card").filter({ hasText: "Notifications" }).first().innerText();
 console.log("notifications:", (notifCard.split("\n").find((l) => l.includes("pending")) ?? "(none)").trim());
+const pending = Number(/(\d+) pending/.exec(notifCard)?.[1] ?? 0);
+if (pending === 0) throw new Error("a blocked task on a live event queued no notifications");
 const sendBtn = page.getByRole("button", { name: "Send pending" });
 if (await sendBtn.isEnabled()) {
   await sendBtn.click();

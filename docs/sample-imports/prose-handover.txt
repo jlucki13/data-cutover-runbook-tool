@@ -1,0 +1,17 @@
+Handover notes from the Friday dry run.
+
+Statements can't start until accounts is fully migrated — we learned that the hard way in
+rehearsal 2, the statement job reads the new account keys. Balances is the same, it needs
+accounts done first.
+
+Customer notices should wait for both balances and statements, otherwise we send people a
+notice with numbers that move underneath them. Nia reckons notices takes about an hour and
+a half once it starts.
+
+Reconciliation can begin as soon as the matching migration finishes — accounts recon after
+accounts, balances recon after balances. Recon on balances has to be finished by midday
+Saturday for the go/no-go.
+
+We can't flip routing until the go/no-go call is made. Rollback monitoring runs for four
+hours after the smoke test, and we only close the event and send the all-clear once the
+rollback window has been declared closed.

@@ -208,7 +208,7 @@ export function plainRiskSummary(facts: RiskFacts): { headline: string; summary:
           : `${facts.event.name} is on track to finish at ${facts.event.projectedFinish ?? "an undetermined time"}.`;
   const parts = [
     `${facts.counts.complete} of ${facts.counts.tasks} tasks are done.`,
-    badGates.length > 0 ? `${badGates.length} gate${badGates.length === 1 ? "" : "s"} need attention: ${badGates.map((g) => `${g.name} (${g.status.replace("_", " ")})`).join(", ")}.` : "",
+    badGates.length > 0 ? `${badGates.length} gate${badGates.length === 1 ? " needs" : "s need"} attention: ${badGates.map((g) => `${g.name} (${g.status.replace("_", " ")})`).join(", ")}.` : "",
     facts.blocked.length > 0 ? `${facts.blocked.length} blocked or failed: ${facts.blocked.map((b) => b.ref).join(", ")}.` : "",
     facts.held.length > 0 ? `${facts.held.length} held behind a gate or an upstream block.` : "",
     facts.criticalPath.length > 0 ? `The deciding chain is ${facts.criticalPath.join(" → ")}.` : "",

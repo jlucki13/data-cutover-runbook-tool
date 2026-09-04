@@ -1,0 +1,4 @@
+Task ID,Task Name,Workstream,Owner,Duration (min),Depends On
+CRD-1,Freeze card authorisations,Cards,Sam,30,FRZ-1
+CRD-2,Migrate card tokens,Cards,Sam,120,"CRD-1, MIG-ACC"
+CRD-3,Reconcile card balances,Cards,Recon Team,60,"CRD-2, REC-BAL"

@@ -1,0 +1,4 @@
+Task ID,Task Name,Workstream,Owner,Duration (min),Depends On
+CYC-1,First loop task,Core,Ops Lead,30,CYC-3
+CYC-2,Second loop task,Core,Ops Lead,30,CYC-1
+CYC-3,Third loop task,Core,Ops Lead,30,CYC-2

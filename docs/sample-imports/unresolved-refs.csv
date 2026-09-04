@@ -1,0 +1,4 @@
+Task ID,Task Name,Workstream,Owner,Duration (min),Depends On
+AUD-1,Extract audit trail,Compliance,Recon Team,60,MIG-ACCOUNTS
+AUD-2,Verify record counts,Compliance,Recon Team,45,MIG-XYZ
+AUD-3,File regulator notification,Compliance,Nia,30,AUD-2

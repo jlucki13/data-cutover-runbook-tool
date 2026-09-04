@@ -1,0 +1,9 @@
+Task Ref,Description,Stream,Assigned To,Start,Est. Duration,Predecessors,Must Finish By
+TRE-1,Freeze treasury feeds,Treasury,Nia,2026-10-16 22:00,45m,,
+TRE-2,Snapshot nostro balances,Treasury,Nia,,2h 30m,TRE-1,
+TRE-3,Migrate treasury positions,Treasury,Bala,,180,TRE-2,
+TRE-4,Reconcile treasury positions,Treasury,Recon Team,,1.5h,TRE-3,2026-10-17 16:00
+TRE-5,Sign off treasury,Treasury,Ops Lead,,30 min,TRE-4,
+TRE-6,Re-point payment gateway,Treasury,Sam,,60,TRE-5 FS+30,
+TRE-7,Payment smoke test,Treasury,Sam,,45,TRE-6,
+TRE-8,Release treasury comms,Treasury,Nia,,15,"TRE-7, TRE-5",

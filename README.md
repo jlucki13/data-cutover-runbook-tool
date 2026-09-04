@@ -22,6 +22,18 @@ notifications, dashboards and post-event reporting. Design and rules:
 | `@cutover/notify` | Deterministic notification rules and message rendering. Pure, like the engine. |
 | `@cutover/web` | React app: dashboard, dependency graph, timeline, impact simulation, import review, report, audit log. |
 
+## Try it
+
+```sh
+scripts/dev.sh
+```
+
+Installs, starts Postgres (Docker, or your own at `DATABASE_URL`), migrates, seeds two demo
+events — one in planning, one live around the current time — and runs the API and the web
+app on http://localhost:5173. Walkthrough for driving it by hand:
+[`docs/testing-guide.md`](./docs/testing-guide.md). Sample worksheets to import:
+[`docs/sample-imports/`](./docs/sample-imports/).
+
 ## Local setup
 
 ```sh
@@ -38,8 +50,9 @@ reachable Postgres and use their own database (`TEST_DATABASE_URL`, default
 ## Running the API
 
 ```sh
-pnpm --filter @cutover/api seed     # TRBK mock event, users, gates (idempotent)
-pnpm --filter @cutover/api dev      # http://localhost:4000, identify with x-user-email: jordan@example.com
+pnpm --filter @cutover/api seed       # TRBK mock event, users, gates — planning, next October (idempotent)
+pnpm --filter @cutover/api seed:live  # rehearsal event whose window straddles now, for live mode
+pnpm --filter @cutover/api dev        # http://localhost:4000, identify with x-user-email: jordan@example.com
 ```
 
 ### Optional integrations

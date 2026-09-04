@@ -1,0 +1,4 @@
+Task ID,Task Name,Workstream,Owner,Duration (min),Depends On
+MIG-BAL,Migrate balances,Balances,Bala,240,MIG-ACC
+MIG-STM,Migrate statements,Statements,Sam,300,MIG-ACC
+REC-BAL,Reconcile balances,Reconciliation,Recon Team,90,MIG-BAL

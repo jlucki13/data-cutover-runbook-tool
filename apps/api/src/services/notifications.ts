@@ -94,11 +94,21 @@ export interface EnqueueResult {
   notifications: Notification[];
 }
 
-/** Evaluate the rules and insert anything not already queued or sent. */
+const NOTHING: EnqueueResult = { evaluated: 0, enqueued: 0, suppressed: 0, notifications: [] };
+
+/**
+ * Evaluate the rules and insert anything not already queued or sent.
+ *
+ * Only a live event notifies anyone. A plan under construction is full of work that is
+ * "late" against a window weeks away and gates nobody has been asked to decide yet, and
+ * paging owners about it would teach them to ignore the channel before the event starts.
+ * Statuses recorded during planning still audit and still recompute — they just stay quiet.
+ */
 export async function enqueueNotifications(db: Tx, args: EnqueueArgs): Promise<EnqueueResult> {
   const rb = await loadRunbook(db, args.eventId);
+  if (rb.event.status !== "live") return NOTHING;
   const built = buildGraph(rb.input);
-  if (!built.ok) return { evaluated: 0, enqueued: 0, suppressed: 0, notifications: [] };
+  if (!built.ok) return NOTHING;
   const available = args.channels ?? defaultChannels();
   const asOf = args.asOf ?? args.schedule.asOf;
 

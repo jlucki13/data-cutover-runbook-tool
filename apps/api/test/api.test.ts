@@ -337,6 +337,29 @@ describe("live execution", () => {
 });
 
 describe("notifications", () => {
+  it("stays silent while an event is still in planning, and speaks once it goes live", async () => {
+    // A plan under construction is full of work that is "late" against a distant window.
+    // Paging owners about it would train them to ignore the channel before the event starts.
+    const planId = (await call(ctx.app, { method: "POST", url: "/events", as: users.builder, expect: 201, payload: { name: "Quiet Planning Event", windowStart: new Date(at(0)).toISOString(), windowEnd: new Date(at(32 * 60)).toISOString() } })).body.id;
+    const imp = await call(ctx.app, { method: "POST", url: `/events/${planId}/imports`, as: users.builder, expect: 201, payload: { format: "csv", filename: "trbk.csv", content: TRBK_CSV } });
+    await call(ctx.app, { method: "POST", url: `/imports/${imp.body.batch.id}/commit`, as: users.builder, expect: 200, payload: { acceptAllProposed: true } });
+    const planTasks = (await call(ctx.app, { method: "GET", url: `/events/${planId}/tasks`, as: users.auditor, expect: 200 })).body as any[];
+    const migAcc = planTasks.find((t) => t.ref === "MIG-ACC").id;
+
+    const quiet = await call(ctx.app, { method: "PATCH", url: `/tasks/${migAcc}`, as: users.builder, expect: 200, payload: { status: "blocked", statusNote: "vendor is late" } });
+    expect(quiet.body.notificationsQueued).toBe(0);
+    expect(quiet.body.scheduleRunId).toBeDefined(); // still audited and still recomputed
+    const evaluated = await call(ctx.app, { method: "POST", url: `/events/${planId}/notifications/evaluate`, as: users.builder, expect: 200, payload: {} });
+    expect(evaluated.body).toMatchObject({ evaluated: 0, enqueued: 0 });
+    expect((await call(ctx.app, { method: "GET", url: `/events/${planId}/notifications`, as: users.auditor, expect: 200 })).body.notifications).toHaveLength(0);
+
+    await call(ctx.app, { method: "PATCH", url: `/events/${planId}`, as: users.cc, expect: 200, payload: { status: "live" } });
+    const live = await call(ctx.app, { method: "POST", url: `/events/${planId}/notifications/evaluate`, as: users.cc, expect: 200, payload: {} });
+    expect(live.body.enqueued).toBeGreaterThan(0);
+    const kinds = new Set((await call(ctx.app, { method: "GET", url: `/events/${planId}/notifications`, as: users.auditor, expect: 200 })).body.notifications.map((n: any) => n.kind));
+    expect(kinds.has("task_blocked")).toBe(true); // the same fact that was silent a moment ago
+  });
+
   it("queues notices for the owner and the command centre, and suppresses an unchanged repeat", async () => {
     sent.length = 0;
     const r = await call(ctx.app, { method: "PATCH", url: `/tasks/${taskIdByRef.get("MIG-STM")}`, as: users.sam, expect: 200, payload: { status: "blocked", statusNote: "waiting on the source system" } });
