@@ -77,6 +77,10 @@ export const scheduleRunKind = pgEnum("schedule_run_kind", [
   "scenario", // pre-event "what if"; no side effects on tasks
 ]);
 
+export const notificationChannel = pgEnum("notification_channel", ["email", "slack", "log"]);
+export const notificationStatus = pgEnum("notification_status", ["pending", "sent", "failed", "suppressed"]);
+export const notificationSeverity = pgEnum("notification_severity", ["info", "warning", "critical"]);
+
 export const importStatus = pgEnum("import_status", [
   "uploaded",
   "parsing",
@@ -490,6 +494,54 @@ export const importCandidateDependency = pgTable(
       "import_candidate_dependency_no_self_loop_chk",
       sql`${t.predecessorRef} <> ${t.successorRef}`,
     ),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Notification outbox
+// ---------------------------------------------------------------------------
+
+/**
+ * One row per (notice, recipient, channel). The unique index on
+ * (event, dedupe_key, recipient, channel) is the deduplication mechanism: the rules
+ * package produces a stable key per "fact in this state", so re-evaluating an unchanged
+ * event inserts nothing, while a materially worse state produces a new key and notifies.
+ */
+export const notification = pgTable(
+  "notification",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => event.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    severity: notificationSeverity("severity").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: uuid("entity_id"),
+    title: text("title").notNull(),
+    /** Deterministic body from the rules package. */
+    body: text("body").notNull(),
+    /** The engine facts behind the notice. */
+    facts: jsonb("facts").$type<Record<string, unknown>>().notNull().default({}),
+    dedupeKey: text("dedupe_key").notNull(),
+    recipientUserId: uuid("recipient_user_id").references(() => appUser.id, { onDelete: "cascade" }),
+    /** owner | approver | command_center | builder */
+    recipientReason: text("recipient_reason").notNull(),
+    channel: notificationChannel("channel").notNull(),
+    status: notificationStatus("status").notNull().default("pending"),
+    /** Rendered at dispatch time, kept as the record of what was actually sent. */
+    subject: text("subject"),
+    renderedBody: text("rendered_body"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    /** The schedule run whose recompute produced this notice. */
+    scheduleRunId: uuid("schedule_run_id").references(() => scheduleRun.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("notification_dedupe_uq").on(t.eventId, t.dedupeKey, t.recipientUserId, t.channel),
+    index("notification_event_status_idx").on(t.eventId, t.status, t.createdAt),
   ],
 );
 

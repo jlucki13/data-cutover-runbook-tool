@@ -242,3 +242,58 @@ export interface ReviewBody {
 export const reviewImport = (batchId: string, body: ReviewBody) => api<ReviewPayload>(`/imports/${batchId}/review`, { method: "POST", json: body });
 export const commitImport = (batchId: string, acceptAllProposed: boolean) => api<Record<string, unknown>>(`/imports/${batchId}/commit`, { method: "POST", json: { acceptAllProposed } });
 export const discardImport = (batchId: string) => api<void>(`/imports/${batchId}/discard`, { method: "POST" });
+
+// ---------------------------------------------------------------- notifications, summary, report
+
+export interface NotificationRow {
+  id: string;
+  kind: string;
+  severity: "info" | "warning" | "critical";
+  entityType: string;
+  entityId: string | null;
+  title: string;
+  body: string;
+  facts: Record<string, unknown>;
+  recipientUserId: string | null;
+  recipientReason: string;
+  channel: "email" | "slack" | "log";
+  status: "pending" | "sent" | "failed" | "suppressed";
+  attempts: number;
+  lastError: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+export interface NotificationsPayload {
+  counts: Record<string, number>;
+  notifications: NotificationRow[];
+}
+export const listNotifications = (eventId: string, status?: string) => api<NotificationsPayload>(`/events/${eventId}/notifications${status ? `?status=${status}` : ""}`);
+export const evaluateNotifications = (eventId: string) => api<{ evaluated: number; enqueued: number; suppressed: number }>(`/events/${eventId}/notifications/evaluate`, { method: "POST", json: {} });
+export const dispatchNotifications = (eventId: string) => api<{ attempted: number; sent: number; failed: number }>(`/events/${eventId}/notifications/dispatch`, { method: "POST", json: {} });
+export const retryNotifications = (eventId: string, ids: string[]) => api<{ requeued: number }>(`/events/${eventId}/notifications/retry`, { method: "POST", json: { ids } });
+
+export interface RiskSummary {
+  headline: string;
+  summary: string;
+  watchItems: { what: string; why: string }[];
+  model: string | null;
+  facts: Record<string, any>;
+}
+export const getSummary = (eventId: string) => api<RiskSummary>(`/events/${eventId}/summary`);
+export const draftGateComms = (gateId: string, audience: string) => api<{ subject: string; body: string; model: string }>(`/gates/${gateId}/comms-draft`, { method: "POST", json: { audience } });
+
+export interface EventReport {
+  generatedAt: string;
+  event: Record<string, any>;
+  summary: Record<string, number>;
+  tasks: Record<string, any>[];
+  gates: Record<string, any>[];
+  statusChanges: Record<string, any>[];
+  auditTrail: Record<string, any>[];
+  scheduleRuns: Record<string, any>[];
+  imports: Record<string, any>[];
+  notifications: Record<string, any>[];
+}
+export const getReport = (eventId: string) => api<EventReport>(`/events/${eventId}/report`);
+/** Absolute URL for a CSV export, so the browser can download it directly. */
+export const reportUrl = (eventId: string, format: "json" | "audit.csv" | "tasks.csv") => `${BASE}/events/${eventId}/report?format=${format}`;

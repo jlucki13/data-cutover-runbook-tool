@@ -26,14 +26,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Clear anything left over from a previous run. `ss -ltnp` cannot always see the owning
+# pid here, so match on the command line too — a stale server silently serves old routes.
 free_port() {
   local port="$1"
   local pids
   pids="$(ss -ltnp 2>/dev/null | awk -v p=":$port" '$4 ~ p' | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true)"
-  [[ -n "$pids" ]] && kill $pids 2>/dev/null && sleep 1 || true
+  [[ -n "$pids" ]] && kill $pids 2>/dev/null || true
 }
 free_port "$API_PORT"
 free_port "$WEB_PORT"
+pkill -f "tsx src/server.ts" 2>/dev/null || true
+pkill -f "vite preview" 2>/dev/null || true
+sleep 1
 
 echo "logs: $LOG_DIR"
 setsid bash -c "cd apps/api && PORT=$API_PORT exec pnpm exec tsx src/server.ts" >"$API_LOG" 2>&1 &

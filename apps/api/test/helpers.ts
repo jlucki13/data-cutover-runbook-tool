@@ -10,6 +10,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { schema, type Db } from "@cutover/db";
 import type { LlmClient } from "@cutover/ingest";
+import type { Channels } from "../src/services/notifications.js";
 import type { FastifyInstance, InjectOptions } from "fastify";
 import { buildApp } from "../src/app.js";
 
@@ -35,13 +36,13 @@ export interface TestContext {
   close: () => Promise<void>;
 }
 
-export async function freshApp(opts: { llm?: LlmClient } = {}): Promise<TestContext> {
+export async function freshApp(opts: { llm?: LlmClient; channels?: Channels } = {}): Promise<TestContext> {
   await ensureDatabase();
   const client = postgres(TEST_DATABASE_URL, { max: 5 });
   await client.unsafe("drop schema if exists drizzle cascade; drop schema public cascade; create schema public;");
   const db = drizzle(client, { schema });
   await migrate(db, { migrationsFolder: path.join(here, "../../../packages/db/drizzle") });
-  const app = await buildApp({ db, llm: opts.llm });
+  const app = await buildApp({ db, llm: opts.llm, channels: opts.channels, baseUrl: "https://runbook.test" });
   return {
     app,
     db,

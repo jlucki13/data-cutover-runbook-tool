@@ -25,6 +25,9 @@ page.on("console", (m) => {
   // favicon is not shipped; ignore its 404.
   if (m.type() === "error" && !m.text().includes("favicon")) errors.push(`console: ${m.text()}`);
 });
+page.on("response", (r) => {
+  if (r.status() >= 400 && !r.url().includes("favicon")) errors.push(`http ${r.status()} ${r.url()}`);
+});
 page.on("requestfailed", (r) => {
   if (!r.url().includes("favicon")) errors.push(`requestfailed: ${r.url()} ${r.failure()?.errorText}`);
 });
@@ -38,6 +41,10 @@ const link = page.getByRole("link", { name: EVENT_NAME, exact: true });
 if ((await link.count()) === 0) throw new Error(`event "${EVENT_NAME}" is not in the list; seed it or set EVENT_NAME`);
 console.log("event:", EVENT_NAME);
 await link.first().click();
+
+// The event opens on the dashboard; the graph is a tab away.
+await page.waitForSelector("text=Situation", { timeout: 20000 });
+await page.getByRole("button", { name: "Graph" }).click();
 
 // Graph
 await page.waitForSelector(".task-node", { timeout: 20000 });
@@ -80,6 +87,46 @@ await page.waitForSelector("text=New import");
 await page.locator("table tbody tr button.linkish").first().click();
 await page.waitForSelector("text=Review:");
 await page.screenshot({ path: `${OUT}/06-imports.png`, fullPage: true });
+
+// Dashboard: block a task through the UI, then check it surfaces and notifies.
+await page.getByRole("button", { name: "Timeline" }).click();
+await page.waitForSelector("svg.timeline rect.bar");
+await page.locator("svg.timeline text", { hasText: "MIG-BAL" }).first().click();
+await page.waitForSelector(".side");
+await page.locator(".side select").first().selectOption("blocked");
+await page.locator('.side input[placeholder^="note"]').fill("source extract is late");
+await page.locator(".side button.primary").filter({ hasText: "Save" }).click();
+await page.waitForTimeout(1500);
+
+await page.getByRole("button", { name: "Dashboard" }).click();
+await page.waitForSelector("text=Situation");
+await page.waitForSelector("text=Critical path");
+await page.waitForSelector("text=source extract is late", { timeout: 20000 });
+const notifCard = await page.locator(".card").filter({ hasText: "Notifications" }).first().innerText();
+console.log("notifications:", (notifCard.split("\n").find((l) => l.includes("pending")) ?? "(none)").trim());
+const sendBtn = page.getByRole("button", { name: "Send pending" });
+if (await sendBtn.isEnabled()) {
+  await sendBtn.click();
+  await page.waitForSelector("text=Dispatched", { timeout: 20000 });
+  console.log("dispatch:", (await page.locator("text=Dispatched").first().innerText()).trim());
+}
+await page.screenshot({ path: `${OUT}/07-dashboard.png`, fullPage: true });
+
+// Report
+await page.getByRole("button", { name: "Report" }).click();
+await page.waitForSelector("text=post-event report");
+const tiles = await page.locator(".report .tile").count();
+console.log(`report: ${tiles} summary tiles`);
+await page.locator("button.chip").filter({ hasText: "tasks" }).first().click();
+await page.waitForSelector("table");
+await page.screenshot({ path: `${OUT}/08-report.png`, fullPage: true });
+const csv = await page.evaluate(async () => {
+  const id = location.pathname.split("/")[2];
+  const res = await fetch(`/api/events/${id}/report?format=audit.csv`, { headers: { "x-user-email": "jordan@example.com" } });
+  return { status: res.status, lines: (await res.text()).split("\r\n").length };
+});
+console.log(`audit csv: HTTP ${csv.status}, ${csv.lines} lines`);
+if (csv.status !== 200 || csv.lines < 5) throw new Error("audit CSV export looks wrong");
 
 } catch (e) {
   await page.screenshot({ path: `${OUT}/failure.png`, fullPage: true }).catch(() => {});

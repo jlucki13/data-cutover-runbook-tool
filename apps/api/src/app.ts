@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import { serializerCompiler, validatorCompiler, hasZodFastifySchemaValidationErrors } from "fastify-type-provider-zod";
 import type { Db } from "@cutover/db";
 import type { LlmClient } from "@cutover/ingest";
+import type { Channels } from "./services/notifications.js";
 import { resolveUser } from "./auth.js";
 import { HttpError } from "./errors.js";
 import { registerRoutes } from "./routes.js";
@@ -10,6 +11,10 @@ import { registerRoutes } from "./routes.js";
 export interface AppOptions {
   db: Db;
   llm?: LlmClient;
+  /** Notification delivery channels; defaults to whatever the environment configures. */
+  channels?: Channels;
+  /** Public base URL for deep links in notifications. */
+  baseUrl?: string;
   logger?: boolean;
 }
 
@@ -39,6 +44,6 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     return reply.code(status).send({ error: status >= 500 ? "internal error" : (err as Error).message });
   });
 
-  await registerRoutes(app, { db: opts.db, llm: opts.llm });
+  await registerRoutes(app, { db: opts.db, llm: opts.llm, channels: opts.channels, baseUrl: opts.baseUrl });
   return app;
 }

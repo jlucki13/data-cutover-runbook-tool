@@ -9,10 +9,9 @@ product: flexible dependency ingestion and deterministic live impact simulation.
 
 ## Status
 
-Build steps 1 to 4 complete: engine, data model, ingestion pipeline, API, and the web app
-(dependency graph, timeline, impact simulation, import review, audit). Design and rules:
-[proposal 0001](./docs/proposals/0001-kickoff-architecture.md). Next: notifications,
-dashboards and post-event reporting (build step 6).
+All six build steps complete: engine, data model, ingestion, API, web app, and
+notifications, dashboards and post-event reporting. Design and rules:
+[proposal 0001](./docs/proposals/0001-kickoff-architecture.md).
 
 | Package | Purpose |
 | --- | --- |
@@ -20,7 +19,8 @@ dashboards and post-event reporting (build step 6).
 | `@cutover/ingest` | Parsers (CSV/TSV, Excel, MS Project XML, LLM prose) and the worksheet compile + diff step. |
 | `@cutover/db` | Drizzle schema, migrations, `createDb()`. |
 | `@cutover/api` | Fastify API: import → review → commit, graph, schedule, simulation, live updates, audit. |
-| `@cutover/web` | React app: dependency graph, timeline, impact simulation, import review, audit log. |
+| `@cutover/notify` | Deterministic notification rules and message rendering. Pure, like the engine. |
+| `@cutover/web` | React app: dashboard, dependency graph, timeline, impact simulation, import review, report, audit log. |
 
 ## Local setup
 
@@ -41,6 +41,18 @@ reachable Postgres and use their own database (`TEST_DATABASE_URL`, default
 pnpm --filter @cutover/api seed     # TRBK mock event, users, gates (idempotent)
 pnpm --filter @cutover/api dev      # http://localhost:4000, identify with x-user-email: jordan@example.com
 ```
+
+### Optional integrations
+
+| Variable | Effect |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Enables prose import, the model-worded dashboard summary, and gate comms drafts. Without it the summary falls back to a deterministic one and prose import is refused. |
+| `SLACK_WEBHOOK_URL` | Delivers notifications to a Slack incoming webhook. |
+| `SMTP_URL`, `SMTP_FROM` | Delivers notifications by email. |
+| `PUBLIC_BASE_URL` | Deep links in notification bodies. |
+
+With no channel configured, notifications still queue and "deliver" to the log, so a
+deployment without credentials records exactly what it would have sent.
 
 Set `ANTHROPIC_API_KEY` to enable the prose import format. To evaluate the prose parser:
 `pnpm --filter @cutover/ingest eval:prose`.

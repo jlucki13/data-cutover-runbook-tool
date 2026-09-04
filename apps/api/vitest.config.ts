@@ -8,6 +8,7 @@ export default defineConfig({
       "@cutover/engine": p("../../packages/engine/src/index.ts"),
       "@cutover/ingest": p("../../packages/ingest/src/index.ts"),
       "@cutover/db": p("../../packages/db/src/index.ts"),
+      "@cutover/notify": p("../../packages/notify/src/index.ts"),
     },
   },
   test: { include: ["test/**/*.test.ts"], testTimeout: 60_000, fileParallelism: false },

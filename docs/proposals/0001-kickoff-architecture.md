@@ -17,6 +17,7 @@ What is in the repo:
 | `apps/api/` | Fastify API (§8): import → review → commit workflow, graph, schedule, simulation, live task/gate updates, audit. 17 integration tests against Postgres. |
 | `apps/api/seed/trbk.csv`, `apps/api/src/seed.ts` | Seeds the TRBK event through the real import pipeline. |
 | `apps/web/` | React app (§9): graph, timeline, simulation, import review, audit. 6 unit tests + a browser smoke run. |
+| `packages/notify/` | Deterministic notification rules and rendering (§10). 17 tests. |
 | `scripts/smoke.sh` | Starts API + built web app against a seeded database and drives the real UI in Chromium. |
 | `docker-compose.yml` | Local Postgres 16. |
 
@@ -460,4 +461,73 @@ error. It found three real bugs: a missing React Flow provider that blanked the 
 grid that gave the canvas zero height, and committed import candidates that still
 displayed as "proposed" instead of recording the decision.
 
-Next: build step 6, notifications, dashboards and post-event reporting.
+---
+
+## 10. Build step 6 as delivered: notifications, dashboards, reporting
+
+### Notifications (`@cutover/notify` + the API outbox)
+
+The rules are a **pure package, like the engine**: same inputs, same notices, same
+dedupe keys, no I/O and no clock. That matters because an alert during a live event is
+a claim about scheduling, and CLAUDE.md's non-negotiable rule applies to it as much as
+to the critical path. Nine rules, each derived from engine output:
+
+| Kind | Fires when | Goes to |
+| --- | --- | --- |
+| `task_ready` | Not started, every predecessor complete, any gate in front approved, startable now | Owner |
+| `task_blocked` | The owner marked it blocked or failed, with the assumed recovery stated | Owner + command centre |
+| `task_held` | A no-go gate or an upstream block stops it | Owner + command centre |
+| `task_deadline_at_risk` | Projected finish is past the task's own deadline | Owner + command centre |
+| `task_negative_float` | Float has gone negative without a deadline of its own | Owner + command centre |
+| `gate_awaiting_decision` | Entry work is done, or the target time is near (live events only) | Approver + command centre |
+| `gate_at_risk` | Projected ready time is late against the target | Approver + command centre |
+| `gate_decided` | Somebody decided, on the transition only | Approver + command centre |
+| `event_window_at_risk` | Projected finish is past the event window | Command centre |
+
+**Deduplication is a stable key, not a timer.** Each notice carries a key describing
+"this fact in this state", with magnitude bucketed to 30 minutes. Re-evaluating an
+unchanged event inserts nothing (a unique index on event + key + recipient + channel);
+a materially worse state produces a new key and notifies again. This is what stops a
+30-second recompute loop from paging a workstream lead forty times.
+
+Delivery is an outbox in Postgres, one row per (notice, recipient, channel), rendered
+at dispatch and stored as the record of what was actually sent. Channels reuse existing
+connectors: a Slack incoming webhook and SMTP. **With nothing configured, notices still
+queue and deliver to the log**, so a deployment without credentials still records
+exactly what it would have sent rather than silently dropping it. Rules run
+automatically inside the same transaction as every live task update and gate decision.
+
+### Dashboard
+
+The command-centre view: situation headline, critical path, progress, open gates with
+Go / No-go buttons and a comms draft, at-risk and blocked work, in-flight tasks, and the
+notification outbox with send and retry.
+
+One deliberate rule, found by looking at a screenshot: **the dashboard always reads the
+baseline, never an active what-if.** The first version mixed them, and showed a
+model-written "on track" headline directly above a gate the scenario had breached.
+Scenarios live in the Simulate tab; a banner says so when one is active.
+
+### Reporting
+
+`GET /events/:id/report` returns the full record: planned vs actual per task with
+duration and start variance, every gate decision with approver and timestamp, every
+status change, the whole audit trail, schedule runs, imports and notifications.
+Exports as JSON, an audit-trail CSV and a task CSV, and the Report tab prints to PDF
+with the app chrome removed. CSV cells beginning with `=`, `+`, `-` or `@` are prefixed
+with an apostrophe: an exported audit trail contains user-supplied notes, and a
+compliance reviewer opening it in Excel should not execute them.
+
+### LLM use, and its limits
+
+Two model-assisted features, both matching CLAUDE.md: a plain-language dashboard
+summary, and a stakeholder comms draft when a gate is at risk. Both receive **computed
+facts only** — no graph, no dependency list, nothing to reason about scheduling with —
+and are schema-constrained. The prompt forbids computing or estimating any number not
+supplied. A test asserts the prompt contains the critical path but not the dependency
+structure. Without credentials the summary falls back to a deterministic sentence built
+from the same facts, and the UI labels which one produced it.
+
+Verification: 17 notify unit tests, 9 new API integration tests, and the browser smoke
+now drives the whole loop — block a task in the timeline, see it appear on the
+dashboard and in the outbox, dispatch it, then open the report and export the audit CSV.

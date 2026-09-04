@@ -9,11 +9,18 @@ import * as S from "./schemas.js";
 import { writeAudit, snapshot } from "./services/audit.js";
 import { commitImport, createImport, discardImport, getImportReview, listImports, reviewCandidates } from "./services/imports.js";
 import { decideGate, simulate, updateTask } from "./services/live.js";
+import { dispatchNotifications, enqueueNotifications, listNotifications, notificationCounts, retryNotifications, type Channels } from "./services/notifications.js";
+import { auditCsv, buildEventReport, tasksCsv } from "./services/report.js";
+import { plainRiskSummary, riskFacts, summarizeRisk, draftGateComms } from "./services/summary.js";
 import { latestRun, loadRunbook, persistScheduleRun, scheduleFor } from "./services/runbook.js";
 
 export interface RouteDeps {
   db: Db;
   llm?: LlmClient;
+  /** Delivery channels for the notification outbox. Defaults to env-configured channels. */
+  channels?: Channels;
+  /** Public base URL, used for deep links in notifications. */
+  baseUrl?: string;
 }
 
 export async function registerRoutes(fastify: FastifyInstance, deps: RouteDeps): Promise<void> {
@@ -160,7 +167,7 @@ export async function registerRoutes(fastify: FastifyInstance, deps: RouteDeps):
       if (t.ownerId !== u.id) throw conflict("task owners can only update their own tasks");
       if (planFields.some((f) => req.body[f] !== undefined)) throw conflict("task owners can update status and estimates, not the plan");
     }
-    return updateTask(db, req.params.id, req.body, u.id);
+    return updateTask(db, req.params.id, req.body, u.id, Date.now(), deps.channels);
   });
 
   // ------------------------------------------------------------------ gates
@@ -209,6 +216,49 @@ export async function registerRoutes(fastify: FastifyInstance, deps: RouteDeps):
     const g = (await db.select().from(gate).where(eq(gate.id, req.params.id)).limit(1))[0];
     if (!g) throw notFound("gate");
     if (g.approverId && g.approverId !== req.user!.id && req.user!.role !== "admin") throw conflict("only the designated approver (or an admin) can decide this gate");
-    return decideGate(db, req.params.id, req.body.decision, req.body.note, req.user!.id);
+    return decideGate(db, req.params.id, req.body.decision, req.body.note, req.user!.id, Date.now(), deps.channels);
+  });
+
+  // ---------------------------------------------------------- notifications
+  app.get("/events/:id/notifications", { preHandler: requireAuth, schema: { params: S.idParam, querystring: S.notificationQuery } }, async (req) => ({
+    counts: await notificationCounts(db, req.params.id),
+    notifications: await listNotifications(db, req.params.id, req.query),
+  }));
+  /** Re-run the rules now (they also run automatically after every live change). */
+  app.post("/events/:id/notifications/evaluate", { preHandler: requireRole("builder", "command_center"), schema: { params: S.idParam } }, async (req) => {
+    const rb = await loadRunbook(db, req.params.id);
+    const mode = rb.event.status === "live" ? "live" : "plan";
+    const schedule = scheduleFor(rb.input, mode, Date.now());
+    const r = await enqueueNotifications(db, { eventId: req.params.id, schedule, ...(deps.channels ? { channels: deps.channels } : {}) });
+    return { evaluated: r.evaluated, enqueued: r.enqueued, suppressed: r.suppressed };
+  });
+  app.post("/events/:id/notifications/dispatch", { preHandler: requireRole("builder", "command_center"), schema: { params: S.idParam, body: S.dispatchBody } }, async (req) =>
+    dispatchNotifications(db, req.params.id, { ...(deps.channels ? { channels: deps.channels } : {}), ...(req.body.limit ? { limit: req.body.limit } : {}), ...(deps.baseUrl ? { baseUrl: deps.baseUrl } : {}) }),
+  );
+  app.post("/events/:id/notifications/retry", { preHandler: requireRole("builder", "command_center"), schema: { params: S.idParam, body: S.retryBody } }, async (req) => ({ requeued: await retryNotifications(db, req.body.ids) }));
+
+  // ----------------------------------------------------- dashboard summary
+  /** Deterministic facts always; the model only words them, and only when configured. */
+  app.get("/events/:id/summary", { preHandler: requireAuth, schema: { params: S.idParam, querystring: S.summaryQuery } }, async (req) => {
+    const asOf = req.query.asOf ?? Date.now();
+    if (!deps.llm) {
+      const { facts } = await riskFacts(db, req.params.id, asOf);
+      return { ...plainRiskSummary(facts), model: null, facts };
+    }
+    return summarizeRisk(db, req.params.id, deps.llm, asOf);
+  });
+  app.post("/gates/:id/comms-draft", { preHandler: requireRole("builder", "command_center"), schema: { params: S.idParam, body: S.commsBody } }, async (req) => draftGateComms(db, req.params.id, req.body.audience, deps.llm));
+
+  // ------------------------------------------------------------- reporting
+  app.get("/events/:id/report", { preHandler: requireAuth, schema: { params: S.idParam, querystring: S.reportQuery } }, async (req, reply) => {
+    const report = await buildEventReport(db, req.params.id);
+    const stamp = report.event.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    if (req.query.format === "audit.csv") {
+      return reply.header("content-type", "text/csv; charset=utf-8").header("content-disposition", `attachment; filename="${stamp}-audit.csv"`).send(auditCsv(report));
+    }
+    if (req.query.format === "tasks.csv") {
+      return reply.header("content-type", "text/csv; charset=utf-8").header("content-disposition", `attachment; filename="${stamp}-tasks.csv"`).send(tasksCsv(report));
+    }
+    return report;
   });
 }

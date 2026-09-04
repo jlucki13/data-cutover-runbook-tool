@@ -143,3 +143,13 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
 .impact table td { font-size: 12px; }
 .later { color: var(--critical); }
 .earlier { color: var(--good); }
+
+/* Post-event report: print to PDF without the app chrome. */
+@media print {
+  .topbar, .tabs, .filterbar, .side, .strip, button, .chip[href] { display: none !important; }
+  .event-page, .workspace, .main, .view { display: block !important; height: auto !important; overflow: visible !important; }
+  .report .card { break-inside: avoid; border-color: #ccc; }
+  body { background: #fff; }
+  table { font-size: 10px; }
+}
+.report .tile { min-width: 150px; }

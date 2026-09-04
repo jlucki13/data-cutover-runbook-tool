@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "..", "types": [], "paths": { "@cutover/engine": ["../engine/src/index.ts"] } },
+  "include": ["src"]
+}

@@ -13,14 +13,16 @@ import { TaskPanel } from "./TaskPanel";
 import { SimulatePanel } from "./SimulatePanel";
 import { ImportsPage } from "./ImportsPage";
 import { AuditView } from "./AuditView";
+import { Dashboard } from "./Dashboard";
+import { ReportView } from "./ReportView";
 
-const TABS = ["graph", "timeline", "simulate", "imports", "audit"] as const;
+const TABS = ["dashboard", "graph", "timeline", "simulate", "imports", "report", "audit"] as const;
 type Tab = (typeof TABS)[number];
 
 export function EventPage() {
   const { eventId = "" } = useParams();
   const [params, setParams] = useSearchParams();
-  const tab = (TABS.includes(params.get("view") as Tab) ? params.get("view") : "graph") as Tab;
+  const tab = (TABS.includes(params.get("view") as Tab) ? params.get("view") : "dashboard") as Tab;
   const setTab = (t: Tab) => setParams((p) => ({ ...Object.fromEntries(p), view: t }));
 
   const [changes, setChanges] = useState<Change[]>([]);
@@ -79,6 +81,8 @@ export function EventPage() {
         <div className="main">
           {(tab === "graph" || tab === "timeline") && <FilterBar model={model} filters={filters} setFilters={setFilters} visibleCount={visible.length} />}
           <div className="view">
+            {tab === "dashboard" && <Dashboard model={model} onSelect={setSelected} />}
+            {tab === "report" && <ReportView model={model} />}
             {tab === "graph" && <GraphView model={model} visible={visible} selected={selected} onSelect={setSelected} onFocus={focus} />}
             {tab === "timeline" && <TimelineView model={model} visible={visible} selected={selected} onSelect={setSelected} filters={filters} />}
             {tab === "simulate" && <SimulatePanel model={model} changes={changes} setChanges={setChanges} onSelect={setSelected} />}

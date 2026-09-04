@@ -121,3 +121,10 @@ export const simulateBody = z.object({
 });
 
 export const scheduleQuery = z.object({ mode: z.enum(["plan", "live"]).optional(), asOf: z.coerce.number().int().optional() });
+
+export const notificationQuery = z.object({ status: z.enum(["pending", "sent", "failed", "suppressed"]).optional(), limit: z.coerce.number().int().min(1).max(500).optional() });
+export const dispatchBody = z.object({ limit: z.number().int().min(1).max(500).optional() });
+export const retryBody = z.object({ ids: z.array(uuid).min(1) });
+export const summaryQuery = z.object({ asOf: z.coerce.number().int().optional() });
+export const commsBody = z.object({ audience: z.string().min(1).default("workstream leads and the programme sponsor") });
+export const reportQuery = z.object({ format: z.enum(["json", "audit.csv", "tasks.csv"]).default("json") });

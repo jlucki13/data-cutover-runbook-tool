@@ -8,6 +8,7 @@ import { gate, task, type Db } from "@cutover/db";
 import { simulateChanges, type Change, type GateDecision, type ImpactReport, type Schedule, type TaskStatus } from "@cutover/engine";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { snapshot, writeAudit } from "./audit.js";
+import { enqueueNotifications, type Channels } from "./notifications.js";
 import { loadRunbook, persistScheduleRun, scheduleFor, type TaskRow } from "./runbook.js";
 
 export interface TaskUpdateInput {
@@ -32,12 +33,14 @@ export interface LiveChangeResult {
   scheduleRunId: string;
   schedule: Schedule;
   impact: ImpactReport;
+  /** How many notices this change queued for delivery. */
+  notificationsQueued?: number;
 }
 
 const d = (n: number | null | undefined) => (n === undefined ? undefined : n === null ? null : new Date(n));
 
 /** Apply a task change, audit it, recompute, persist the live run with its impact. */
-export async function updateTask(db: Db, taskId: string, input: TaskUpdateInput, actorId: string, now = Date.now()): Promise<LiveChangeResult> {
+export async function updateTask(db: Db, taskId: string, input: TaskUpdateInput, actorId: string, now = Date.now(), channels?: Channels): Promise<LiveChangeResult> {
   const before = (await db.select().from(task).where(eq(task.id, taskId)).limit(1))[0];
   if (!before) throw notFound("task");
   const runbook = await loadRunbook(db, before.eventId);
@@ -107,11 +110,12 @@ export async function updateTask(db: Db, taskId: string, input: TaskUpdateInput,
       createdById: actorId,
     });
     await writeAudit(tx, { eventId: before.eventId, entityType: "task", entityId: taskId, action: set.status ? "task.status_changed" : "task.updated", before: snapshot(before), after: snapshot(after), actorId, scheduleRunId: runId });
-    return { task: after!, scheduleRunId: runId, schedule: r.schedule, impact: r.impact };
+    const queued = await enqueueNotifications(tx, { eventId: before.eventId, schedule: r.schedule, before: baseline, scheduleRunId: runId, ...(channels ? { channels } : {}), asOf: now });
+    return { task: after!, scheduleRunId: runId, schedule: r.schedule, impact: r.impact, notificationsQueued: queued.enqueued };
   });
 }
 
-export async function decideGate(db: Db, gateId: string, decision: GateDecision, note: string | undefined, actorId: string, now = Date.now()): Promise<LiveChangeResult> {
+export async function decideGate(db: Db, gateId: string, decision: GateDecision, note: string | undefined, actorId: string, now = Date.now(), channels?: Channels): Promise<LiveChangeResult> {
   const before = (await db.select().from(gate).where(eq(gate.id, gateId)).limit(1))[0];
   if (!before) throw notFound("gate");
   const runbook = await loadRunbook(db, before.eventId);
@@ -128,7 +132,8 @@ export async function decideGate(db: Db, gateId: string, decision: GateDecision,
     if (!r.ok) throw conflict("graph invalid after update", r.errors);
     const runId = await persistScheduleRun(tx, { eventId: before.eventId, kind: mode === "live" ? "live" : "scenario", schedule: r.schedule, impact: r.impact, trigger: { type: "gate.decided", gateId, decision }, createdById: actorId });
     await writeAudit(tx, { eventId: before.eventId, entityType: "gate", entityId: gateId, action: "gate.decided", before: snapshot(before), after: snapshot(after), actorId, scheduleRunId: runId });
-    return { gate: after!, scheduleRunId: runId, schedule: r.schedule, impact: r.impact };
+    const queued = await enqueueNotifications(tx, { eventId: before.eventId, schedule: r.schedule, before: baseline, scheduleRunId: runId, ...(channels ? { channels } : {}), asOf: now });
+    return { gate: after!, scheduleRunId: runId, schedule: r.schedule, impact: r.impact, notificationsQueued: queued.enqueued };
   });
 }
 

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
 import type { LlmClient } from "@cutover/ingest";
 import { TRBK_CSV, at, call, createEvent, freshApp, seedUsers, type Actor, type TestContext } from "./helpers.js";
+import { buildApp } from "../src/app.js";
 
 let ctx: TestContext;
 let users: Awaited<ReturnType<typeof seedUsers>>;
@@ -9,8 +10,13 @@ let eventId: string;
 const taskIdByRef = new Map<string, string>();
 const gateIdByName = new Map<string, string>();
 
+let lastSummaryPrompt = "";
 const fakeLlm: LlmClient = {
-  async extract() {
+  async extract(req) {
+    if ((req.schema as { properties?: Record<string, unknown> }).properties?.headline) {
+      lastSummaryPrompt = req.user;
+      return { model: "fake", raw: { headline: "Statements migration is the constraint.", summary: "Two tasks are blocked.", watchItems: [{ what: "MIG-STM", why: "Blocked and on the deciding chain." }] } };
+    }
     return {
       model: "fake",
       raw: {
@@ -25,8 +31,17 @@ const fakeLlm: LlmClient = {
   },
 };
 
+/** Captures what the outbox actually delivered. */
+const sent: { subject: string; body: string; to: string }[] = [];
+const captureChannels = {
+  email: async (to: { name: string; email: string }, subject: string, body: string) => {
+    sent.push({ subject, body, to: to.email });
+    return { ok: true };
+  },
+};
+
 beforeAll(async () => {
-  ctx = await freshApp({ llm: fakeLlm });
+  ctx = await freshApp({ llm: fakeLlm, channels: captureChannels });
   users = await seedUsers(ctx.app);
 });
 afterAll(async () => {
@@ -318,5 +333,129 @@ describe("live execution", () => {
     const dup = await call(ctx.app, { method: "POST", url: `/events/${eventId}/columns`, as: users.admin, payload: { key: "recon_query", label: "again" } });
     expect(dup.status).toBe(409);
     await call(ctx.app, { method: "DELETE", url: `/columns/${col.body.id}`, as: users.admin, expect: 204 });
+  });
+});
+
+describe("notifications", () => {
+  it("queues notices for the owner and the command centre, and suppresses an unchanged repeat", async () => {
+    sent.length = 0;
+    const r = await call(ctx.app, { method: "PATCH", url: `/tasks/${taskIdByRef.get("MIG-STM")}`, as: users.sam, expect: 200, payload: { status: "blocked", statusNote: "waiting on the source system" } });
+    expect(r.body.notificationsQueued).toBeGreaterThanOrEqual(0);
+    const list = await call(ctx.app, { method: "GET", url: `/events/${eventId}/notifications`, as: users.auditor, expect: 200 });
+    expect(list.body.notifications.length).toBeGreaterThan(0);
+    const kinds = new Set(list.body.notifications.map((n: any) => n.kind));
+    expect(kinds.has("task_held")).toBe(true); // work behind the earlier no-go gate
+    // The command centre is on the notices it should be on.
+    expect(list.body.notifications.some((n: any) => n.recipientUserId === users.cc.id)).toBe(true);
+    // Owners hear about their own work.
+    expect(list.body.notifications.some((n: any) => n.recipientUserId === users.priya.id)).toBe(true);
+
+    // Re-evaluating an unchanged event adds nothing but recognises the same facts.
+    const again = await call(ctx.app, { method: "POST", url: `/events/${eventId}/notifications/evaluate`, as: users.cc, expect: 200, payload: {} });
+    expect(again.body.enqueued).toBe(0);
+    expect(again.body.suppressed).toBeGreaterThan(0);
+  });
+
+  it("notifies again when the situation gets materially worse", async () => {
+    const before = (await call(ctx.app, { method: "GET", url: `/events/${eventId}/notifications`, as: users.auditor, expect: 200 })).body.notifications.length;
+    // A much later expected unblock pushes reconciliation past its deadline by a new margin.
+    await call(ctx.app, { method: "PATCH", url: `/tasks/${taskIdByRef.get("MIG-BAL")}`, as: users.builder, expect: 200, payload: { status: "blocked", expectedUnblockAt: at(20 * 60) } });
+    const after = (await call(ctx.app, { method: "GET", url: `/events/${eventId}/notifications`, as: users.auditor, expect: 200 })).body;
+    expect(after.notifications.length).toBeGreaterThan(before);
+    const breach = after.notifications.filter((n: any) => n.kind === "task_deadline_at_risk");
+    expect(breach.length).toBeGreaterThan(0);
+    expect(breach[0].severity).toBe("critical");
+    expect(breach[0].facts.breachMinutes).toBeGreaterThan(0);
+  });
+
+  it("dispatches pending notices through the configured channel exactly once", async () => {
+    sent.length = 0;
+    const d = await call(ctx.app, { method: "POST", url: `/events/${eventId}/notifications/dispatch`, as: users.cc, expect: 200, payload: {} });
+    expect(d.body.sent).toBeGreaterThan(0);
+    expect(d.body.failed).toBe(0);
+    expect(sent.length).toBe(d.body.sent);
+    expect(sent[0]!.subject).toContain("[TRBK Cutover]");
+    expect(sent[0]!.body).toContain("https://runbook.test/events/");
+    const counts = await call(ctx.app, { method: "GET", url: `/events/${eventId}/notifications`, as: users.auditor, expect: 200 });
+    expect(counts.body.counts.pending).toBe(0);
+    expect(counts.body.counts.sent).toBe(d.body.sent);
+    // Nothing left to send.
+    const again = await call(ctx.app, { method: "POST", url: `/events/${eventId}/notifications/dispatch`, as: users.cc, expect: 200, payload: {} });
+    expect(again.body).toMatchObject({ attempted: 0, sent: 0 });
+  });
+
+  it("records a gate decision as a notice to the approver", async () => {
+    sent.length = 0;
+    await call(ctx.app, { method: "POST", url: `/gates/${gateIdByName.get("G2")}/decision`, as: users.cc, expect: 200, payload: { decision: "go", note: "rollback window closed cleanly" } });
+    const list = await call(ctx.app, { method: "GET", url: `/events/${eventId}/notifications`, as: users.auditor, expect: 200 });
+    const decided = list.body.notifications.filter((n: any) => n.kind === "gate_decided");
+    expect(decided.length).toBeGreaterThan(0);
+    expect(decided[0].title).toContain("GO");
+    expect(decided.some((n: any) => n.recipientUserId === users.cc.id)).toBe(true);
+  });
+
+  it("task owners cannot dispatch; auditors can read", async () => {
+    const denied = await call(ctx.app, { method: "POST", url: `/events/${eventId}/notifications/dispatch`, as: users.priya, payload: {} });
+    expect(denied.status).toBe(403);
+    await call(ctx.app, { method: "GET", url: `/events/${eventId}/notifications`, as: users.auditor, expect: 200 });
+  });
+});
+
+describe("summary", () => {
+  it("falls back to a deterministic summary built from engine facts when no model is configured", async () => {
+    // Same database, an app with no LLM: the path a deployment without credentials takes.
+    const noModel = await buildApp({ db: ctx.db });
+    const s = await call(noModel, { method: "GET", url: `/events/${eventId}/summary`, as: users.auditor, expect: 200 });
+    await noModel.close();
+    expect(s.body.model).toBeNull();
+    expect(s.body.headline).toBeTruthy();
+    expect(s.body.facts.counts.tasks).toBeGreaterThan(0);
+    expect(s.body.facts.blocked.map((b: any) => b.ref)).toContain("MIG-STM");
+    // The headline states a fact the engine computed, not an opinion.
+    expect(s.body.summary).toContain("tasks are done");
+  });
+
+  it("hands the model only computed facts and returns what it wrote", async () => {
+    const s = await call(ctx.app, { method: "GET", url: `/events/${eventId}/summary`, as: users.auditor, expect: 200 });
+    expect(s.body.model).toBe("fake");
+    expect(s.body.headline).toBe("Statements migration is the constraint.");
+    expect(lastSummaryPrompt).toContain('"criticalPath"');
+    expect(lastSummaryPrompt).toContain("MIG-STM");
+    // No graph, no dependency list: the model cannot re-derive scheduling.
+    expect(lastSummaryPrompt).not.toContain("predecessorId");
+  });
+});
+
+describe("post-event report", () => {
+  it("reports planned vs actual, gate decisions with approver and timestamp, and every status change", async () => {
+    const r = await call(ctx.app, { method: "GET", url: `/events/${eventId}/report`, as: users.auditor, expect: 200 });
+    expect(r.body.event.name).toBe("TRBK Cutover");
+    expect(r.body.summary.tasks).toBeGreaterThan(10);
+    expect(r.body.summary.statusChanges).toBeGreaterThan(0);
+    const migAcc = r.body.tasks.find((t: any) => t.ref === "MIG-ACC");
+    expect(migAcc.owner).toBe("Priya");
+    expect(migAcc.actualStart).toBeTruthy();
+    const decided = r.body.gates.filter((g: any) => g.decision !== "pending");
+    expect(decided.length).toBeGreaterThan(0);
+    expect(decided[0].decidedBy).toBeTruthy();
+    expect(decided[0].decidedAt).toBeTruthy();
+    expect(r.body.statusChanges[0]).toMatchObject({ taskRef: expect.any(String), to: expect.any(String) });
+    expect(r.body.auditTrail.length).toBeGreaterThan(5);
+    expect(r.body.notifications.length).toBeGreaterThan(0);
+  });
+
+  it("exports the audit trail and the task record as CSV, guarding against formula injection", async () => {
+    const audit = await call<string>(ctx.app, { method: "GET", url: `/events/${eventId}/report?format=audit.csv`, as: users.auditor, expect: 200 });
+    expect(audit.body.split("\r\n")[0]).toBe("timestamp,actor,action,entity_type,entity,detail");
+    expect(audit.body.split("\r\n").length).toBeGreaterThan(5);
+    const tasks = await call<string>(ctx.app, { method: "GET", url: `/events/${eventId}/report?format=tasks.csv`, as: users.auditor, expect: 200 });
+    expect(tasks.body.split("\r\n")[0]).toContain("duration_variance_min");
+    expect(tasks.body).toContain("MIG-ACC");
+
+    // A note that looks like a spreadsheet formula is neutralised on export.
+    await call(ctx.app, { method: "PATCH", url: `/tasks/${taskIdByRef.get("REC-ACC")}`, as: users.builder, expect: 200, payload: { status: "blocked", statusNote: "=cmd|'/c calc'!A1" } });
+    const after = await call<string>(ctx.app, { method: "GET", url: `/events/${eventId}/report?format=tasks.csv`, as: users.auditor, expect: 200 });
+    expect(after.body).toContain("'=cmd");
+    expect(after.body).not.toMatch(/,=cmd/);
   });
 });

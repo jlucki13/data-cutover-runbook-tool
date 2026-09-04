@@ -3,13 +3,26 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "../..",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "exactOptionalPropertyTypes": false,
     "paths": {
-      "@cutover/engine": ["../../packages/engine/src/index.ts"],
-      "@cutover/ingest": ["../../packages/ingest/src/index.ts"],
-      "@cutover/db": ["../../packages/db/src/index.ts"]
+      "@cutover/engine": [
+        "../../packages/engine/src/index.ts"
+      ],
+      "@cutover/ingest": [
+        "../../packages/ingest/src/index.ts"
+      ],
+      "@cutover/db": [
+        "../../packages/db/src/index.ts"
+      ],
+      "@cutover/notify": [
+        "../../packages/notify/src/index.ts"
+      ]
     }
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }
